@@ -1,5 +1,6 @@
 package com.example.fishingvoicetrainer
 
+import android.content.Context
 import android.annotation.SuppressLint
 import android.media.AudioFormat
 import android.media.AudioRecord
@@ -74,16 +75,55 @@ fun stopRecording(recorder: AudioRecord?) {
 }
 
 // ===============================
+//  NORMALIZARE AUDIO (peak normalize la -1 dB)
+// ===============================
+fun normalizePcm(samples: ShortArray, targetDb: Int = -1): ShortArray {
+
+    // 1) Găsim peak-ul absolut
+    var peak = 0
+    for (s in samples) {
+        val v = abs(s.toInt())
+        if (v > peak) peak = v
+    }
+
+    if (peak == 0) return samples // liniște totală
+
+    // 2) Calculăm factorul de amplificare
+    val targetAmp = (32767.0 * Math.pow(10.0, targetDb / 20.0)).toInt()
+    val factor = targetAmp.toDouble() / peak.toDouble()
+
+    // 3) Aplicăm factorul, cu protecție la clipping
+    val out = ShortArray(samples.size)
+    for (i in samples.indices) {
+        val scaled = (samples[i] * factor).toInt()
+        out[i] = scaled.coerceIn(-32767, 32767).toShort()
+    }
+
+    return out
+}
+
+// ===============================
 //  TRIMMING AUTOMAT AL LINISTII
+//  (cu setări din SharedPreferences)
 // ===============================
 
 fun trimSilence(
-    pcmFile: File,
-    minThreshold: Int = 1500,   // prag minim (telefon liniștit)
-    maxThreshold: Int = 4000,   // prag maxim (zgomot mare)
-    windowSize: Int = 160,      // ~10 ms la 16 kHz
-    minVoiceMs: Int = 200       // minim 200 ms de voce păstrată
+    context: Context,
+    pcmFile: File
 ): File {
+
+    val prefs = context.getSharedPreferences("settings", 0)
+
+    val minThreshold = prefs.getInt("minThreshold", 1800)
+    val maxThreshold = prefs.getInt("maxThreshold", 3800)
+    val windowSize = prefs.getInt("windowSize", 80)   // 5 ms recomandat
+    val minVoiceMs = prefs.getInt("minVoiceMs", 200)
+
+    val preRollMs = prefs.getInt("preRollMs", 60)
+    val postRollMs = prefs.getInt("postRollMs", 180)
+
+    val preRollSamples = (preRollMs * 16).coerceAtLeast(0)
+    val postRollSamples = (postRollMs * 16).coerceAtLeast(0)
 
     val pcmData = pcmFile.readBytes()
     if (pcmData.isEmpty()) return pcmFile
@@ -100,50 +140,57 @@ fun trimSilence(
     val noiseWindowSamples = (0.3f * 16000).toInt().coerceAtMost(samples.size)
     var noiseMax = 0
     for (i in 0 until noiseWindowSamples) {
-        noiseMax = maxOf(noiseMax, kotlin.math.abs(samples[i].toInt()))
+        noiseMax = maxOf(noiseMax, abs(samples[i].toInt()))
     }
 
-    // prag adaptiv: între minThreshold și maxThreshold
-    val adaptiveThreshold = noiseMax
-        .coerceIn(minThreshold, maxThreshold)
+    val adaptiveThreshold = noiseMax.coerceIn(minThreshold, maxThreshold)
 
-    // 2) Căutăm începutul (prima fereastră care depășește pragul)
+    // 2) Căutăm începutul
     var start = 0
     while (start < samples.size) {
         var maxAmp = 0
         for (i in start until minOf(start + windowSize, samples.size)) {
-            maxAmp = maxOf(maxAmp, kotlin.math.abs(samples[i].toInt()))
+            maxAmp = maxOf(maxAmp, abs(samples[i].toInt()))
         }
         if (maxAmp > adaptiveThreshold) break
         start += windowSize
     }
 
-    // 3) Căutăm finalul (de la coadă spre început)
+    // PRE‑ROLL
+    start = (start - preRollSamples).coerceAtLeast(0)
+
+    // 3) Căutăm finalul
     var end = samples.size - 1
     while (end > 0) {
         var maxAmp = 0
         val winStart = maxOf(0, end - windowSize)
         for (i in winStart..end) {
-            maxAmp = maxOf(maxAmp, kotlin.math.abs(samples[i].toInt()))
+            maxAmp = maxOf(maxAmp, abs(samples[i].toInt()))
         }
         if (maxAmp > adaptiveThreshold) break
         end -= windowSize
     }
 
-    // 4) Protecție: dacă nu găsim voce clară, returnăm originalul
+    // POST‑ROLL
+    end = (end + postRollSamples).coerceAtMost(samples.size - 1)
+
+    // 4) Protecție: dacă nu găsim voce clară
     if (start >= end) return pcmFile
 
-    // 5) Verificăm să avem măcar minVoiceMs de voce
-    val minVoiceSamples = (minVoiceMs * 16).coerceAtMost(samples.size) // 16 samples/ms la 16 kHz
+    // 5) Minim X ms voce
+    val minVoiceSamples = (minVoiceMs * 16).coerceAtMost(samples.size)
     if (end - start < minVoiceSamples) return pcmFile
 
-    // 6) Extragem partea utilă (inclusiv end)
+    // 6) Extragem partea utilă
     val trimmedSamples = samples.copyOfRange(start, end + 1)
 
-    // 7) Scriem într-un nou fișier
+    // 🔥 NORMALIZARE DUPĂ TRIMMING
+    val normalizedSamples = normalizePcm(trimmedSamples)
+
+    // 7) Scriem fișierul
     val trimmedFile = File(pcmFile.parent, pcmFile.nameWithoutExtension + "_trimmed.pcm")
     FileOutputStream(trimmedFile).use { fos ->
-        for (s in trimmedSamples) {
+        for (s in normalizedSamples) {
             fos.write(s.toInt() and 0xFF)
             fos.write((s.toInt() shr 8) and 0xFF)
         }
@@ -151,7 +198,6 @@ fun trimSilence(
 
     return trimmedFile
 }
-
 
 // ===============================
 //  CONVERSIE PCM → WAV

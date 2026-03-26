@@ -30,10 +30,14 @@ import java.io.FileOutputStream
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
+// ---------------------------------------------------------
+//  SCREEN STATES
+// ---------------------------------------------------------
 enum class ScreenState {
     MAIN,
     RECORD,
-    SAMPLES
+    SAMPLES,
+    SETTINGS   // 🔵 NOU
 }
 
 class MainActivity : ComponentActivity() {
@@ -49,18 +53,23 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+// ---------------------------------------------------------
+//  APP CONTENT + NAVIGARE
+// ---------------------------------------------------------
 @Composable
 fun AppContent() {
     var screen by remember { mutableStateOf(ScreenState.MAIN) }
     var selectedCommand by remember { mutableStateOf("") }
 
     when (screen) {
+
         ScreenState.MAIN -> MainScreen(
             onCommandSelected = { cmd ->
                 selectedCommand = cmd
                 screen = ScreenState.RECORD
             },
-            onSamples = { screen = ScreenState.SAMPLES }
+            onSamples = { screen = ScreenState.SAMPLES },
+            onSettings = { screen = ScreenState.SETTINGS }   // 🔵 NOU
         )
 
         ScreenState.RECORD -> RecordScreen(
@@ -71,13 +80,21 @@ fun AppContent() {
         ScreenState.SAMPLES -> SamplesScreen(
             onBack = { screen = ScreenState.MAIN }
         )
+
+        ScreenState.SETTINGS -> SettingsScreen(   // 🔵 NOU
+            onBack = { screen = ScreenState.MAIN }
+        )
     }
 }
 
+// ---------------------------------------------------------
+//  MAIN SCREEN
+// ---------------------------------------------------------
 @Composable
 fun MainScreen(
     onCommandSelected: (String) -> Unit,
-    onSamples: () -> Unit
+    onSamples: () -> Unit,
+    onSettings: () -> Unit   // 🔵 NOU
 ) {
 
     val context = LocalContext.current
@@ -96,7 +113,7 @@ fun MainScreen(
         "repeta"
     )
 
-    val target = 50 // target mostre
+    val target = 50
 
     LazyColumn(
         modifier = Modifier
@@ -125,9 +142,9 @@ fun MainScreen(
             }
 
             val color = when {
-                count == 0 -> Color(0xFFFF4444) // roșu
-                count < 10 -> Color(0xFFFFBB33) // galben
-                else -> Color(0xFF99CC00)       // verde
+                count == 0 -> Color(0xFFFF4444)
+                count < 10 -> Color(0xFFFFBB33)
+                else -> Color(0xFF99CC00)
             }
 
             Button(
@@ -168,10 +185,23 @@ fun MainScreen(
             ) {
                 Text("Exportă dataset ZIP", fontSize = 16.sp)
             }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            Button(
+                onClick = onSettings,
+                modifier = Modifier.fillMaxWidth(),
+                contentPadding = PaddingValues(8.dp)
+            ) {
+                Text("Setări", fontSize = 16.sp)
+            }
         }
     }
 }
 
+// ---------------------------------------------------------
+//  EXPORT DATASET
+// ---------------------------------------------------------
 fun exportDataset(context: android.content.Context) {
     val datasetRoot = File(context.getExternalFilesDir(null), "dataset")
     val downloads = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
@@ -189,6 +219,176 @@ fun exportDataset(context: android.content.Context) {
     }
 }
 
+// ---------------------------------------------------------
+//  SETTINGS SCREEN (SLIDER + EXPLICAȚII + RESET S20)
+// ---------------------------------------------------------
+@Composable
+fun SettingsScreen(onBack: () -> Unit) {
+
+    val context = LocalContext.current
+    val prefs = context.getSharedPreferences("settings", 0)
+
+    var minTh by remember { mutableStateOf(prefs.getInt("minThreshold", 1800)) }
+    var maxTh by remember { mutableStateOf(prefs.getInt("maxThreshold", 3800)) }
+    var win by remember { mutableStateOf(prefs.getInt("windowSize", 80)) }
+    var minMs by remember { mutableStateOf(prefs.getInt("minVoiceMs", 200)) }
+
+    var preRollMs by remember { mutableStateOf(prefs.getInt("preRollMs", 60)) }
+    var postRollMs by remember { mutableStateOf(prefs.getInt("postRollMs", 180)) }
+
+    fun save() {
+        prefs.edit()
+            .putInt("minThreshold", minTh)
+            .putInt("maxThreshold", maxTh)
+            .putInt("windowSize", win)
+            .putInt("minVoiceMs", minMs)
+            .putInt("preRollMs", preRollMs)
+            .putInt("postRollMs", postRollMs)
+            .apply()
+    }
+
+    var saved by remember { mutableStateOf(false) }
+
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp)
+            .padding(WindowInsets.navigationBars.asPaddingValues()),
+        verticalArrangement = Arrangement.spacedBy(20.dp)
+    ) {
+
+        item {
+            Text("Setări procesare audio", fontSize = 22.sp)
+        }
+
+        // ---------------------------
+        // Prag minim
+        item {
+            Text("Prag minim (minThreshold): $minTh")
+            Slider(
+                value = minTh.toFloat(),
+                onValueChange = { minTh = it.toInt() },
+                valueRange = 1200f..3000f
+            )
+        }
+
+        // ---------------------------
+        // Prag maxim
+        item {
+            Text("Prag maxim (maxThreshold): $maxTh")
+            Slider(
+                value = maxTh.toFloat(),
+                onValueChange = { maxTh = it.toInt() },
+                valueRange = 2500f..6000f
+            )
+        }
+
+        // ---------------------------
+        // Window size
+        item {
+            Text("Dimensiune fereastră (windowSize): $win")
+            Slider(
+                value = win.toFloat(),
+                onValueChange = { win = it.toInt() },
+                valueRange = 40f..240f
+            )
+            Text("Recomandat: 80 (5 ms)", fontSize = 12.sp)
+        }
+
+        // ---------------------------
+        // Durată minimă voce
+        item {
+            Text("Durată minimă voce (minVoiceMs): $minMs ms")
+            Slider(
+                value = minMs.toFloat(),
+                onValueChange = { minMs = it.toInt() },
+                valueRange = 100f..400f
+            )
+        }
+
+        // ---------------------------
+        // PRE-ROLL
+        item {
+            Text("Pre-roll (ms): $preRollMs")
+            Slider(
+                value = preRollMs.toFloat(),
+                onValueChange = { preRollMs = it.toInt() },
+                valueRange = 0f..150f
+            )
+            Text("Câte ms păstrezi înainte de voce. Recomandat: 60 ms.", fontSize = 12.sp)
+        }
+
+        // ---------------------------
+        // POST-ROLL
+        item {
+            Text("Post-roll (ms): $postRollMs")
+            Slider(
+                value = postRollMs.toFloat(),
+                onValueChange = { postRollMs = it.toInt() },
+                valueRange = 50f..250f
+            )
+            Text("Câte ms păstrezi după voce. Recomandat: 180 ms.", fontSize = 12.sp)
+        }
+
+        // ---------------------------
+        // Reset
+        item {
+            Button(
+                onClick = {
+                    minTh = 1800
+                    maxTh = 3800
+                    win = 80
+                    minMs = 200
+                    preRollMs = 60
+                    postRollMs = 180
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Reset la valori recomandate pentru Samsung S20")
+            }
+        }
+
+        // ---------------------------
+        // Salvare
+        item {
+            Button(
+                onClick = {
+                    save()
+                    saved = true
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Salvează")
+            }
+
+            if (saved) {
+                Text(
+                    "Setările au fost salvate",
+                    fontSize = 12.sp,
+                    color = Color(0xFF2E7D32)
+                )
+            }
+        }
+
+        // ---------------------------
+        // Înapoi
+        item {
+            Button(
+                onClick = onBack,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Înapoi")
+            }
+        }
+    }
+}
+
+
+
+
+// ---------------------------------------------------------
+//  RECORD SCREEN (nemodificat)
+// ---------------------------------------------------------
 @Composable
 fun RecordScreen(command: String, onBack: () -> Unit) {
 
@@ -258,7 +458,7 @@ fun RecordScreen(command: String, onBack: () -> Unit) {
                     isRecording = false
 
                     lastRecordedFile?.let { pcmFile ->
-                        val trimmed = trimSilence(pcmFile)
+                        val trimmed = trimSilence(context, pcmFile)
                         val wavFile = convertPcmToWav(trimmed)
                         lastRecordedFile = wavFile
                     }
@@ -295,6 +495,7 @@ fun RecordScreen(command: String, onBack: () -> Unit) {
     }
 }
 
+// ---------------------------------------------------------
 @Composable
 fun RequestAudioPermission(onGranted: () -> Unit) {
     val launcher = rememberLauncherForActivityResult(
