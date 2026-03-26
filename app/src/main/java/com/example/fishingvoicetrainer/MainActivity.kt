@@ -5,11 +5,13 @@ import android.content.pm.PackageManager
 import android.media.AudioRecord
 import android.media.MediaPlayer
 import android.os.Bundle
+import android.os.Environment
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -17,12 +19,16 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import com.example.fishingvoicetrainer.ui.theme.FishingVoiceTrainerTheme
 import java.io.File
+import java.io.FileOutputStream
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
 
 enum class ScreenState {
     MAIN,
@@ -78,25 +84,19 @@ fun MainScreen(
     val datasetRoot = File(context.getExternalFilesDir(null), "dataset")
 
     val commands = listOf(
-        "start_l1",
-        "start_l2",
-        "stop_l1",
-        "stop_l2",
-        "linebait_l1",
-        "linebait_l2",
-        "peste_l1",
-        "peste_l2",
-        "captura_l1",
-        "captura_l2",
-        "obs_l1",
-        "obs_l2",
+        "start_l1", "start_l2",
+        "stop_l1", "stop_l2",
+        "linebait_l1", "linebait_l2",
+        "peste_l1", "peste_l2",
+        "captura_l1", "captura_l2",
+        "obs_l1", "obs_l2",
         "obs_general",
-        "da",
-        "nu",
-        "confirm",
-        "nu_confirm",
+        "da", "nu",
+        "confirm", "nu_confirm",
         "repeta"
     )
+
+    val target = 50 // target mostre
 
     LazyColumn(
         modifier = Modifier
@@ -113,22 +113,28 @@ fun MainScreen(
 
         items(commands) { cmd ->
 
-            // toate folderele de tip 01_start_l1, 02_start_l1 etc.
             val foldersForCommand = datasetRoot
                 .listFiles()
                 ?.filter { it.isDirectory && it.name.endsWith(cmd) }
                 ?: emptyList()
 
-            // numărăm toate WAV-urile din toate folderele pentru comanda asta
             val count = foldersForCommand.sumOf { folder ->
                 folder.listFiles()
                     ?.count { it.extension.lowercase() == "wav" }
                     ?: 0
             }
 
+            val color = when {
+                count == 0 -> Color(0xFFFF4444) // roșu
+                count < 10 -> Color(0xFFFFBB33) // galben
+                else -> Color(0xFF99CC00)       // verde
+            }
+
             Button(
                 onClick = { onCommandSelected(cmd) },
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(color),
                 contentPadding = PaddingValues(8.dp)
             ) {
                 Row(
@@ -136,8 +142,8 @@ fun MainScreen(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(cmd, fontSize = 16.sp)
-                    Text("$count", fontSize = 14.sp)
+                    Text(cmd, fontSize = 16.sp, color = Color.Black)
+                    Text("$count/$target", fontSize = 14.sp, color = Color.Black)
                 }
             }
         }
@@ -152,10 +158,36 @@ fun MainScreen(
             ) {
                 Text("Gestionare mostre", fontSize = 16.sp)
             }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            Button(
+                onClick = { exportDataset(context) },
+                modifier = Modifier.fillMaxWidth(),
+                contentPadding = PaddingValues(8.dp)
+            ) {
+                Text("Exportă dataset ZIP", fontSize = 16.sp)
+            }
         }
     }
 }
 
+fun exportDataset(context: android.content.Context) {
+    val datasetRoot = File(context.getExternalFilesDir(null), "dataset")
+    val downloads = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+    val zipFile = File(downloads, "dataset_export.zip")
+
+    ZipOutputStream(FileOutputStream(zipFile)).use { zip ->
+        datasetRoot.walkTopDown().forEach { file ->
+            if (file.isFile) {
+                val entry = ZipEntry(file.relativeTo(datasetRoot).path)
+                zip.putNextEntry(entry)
+                zip.write(file.readBytes())
+                zip.closeEntry()
+            }
+        }
+    }
+}
 
 @Composable
 fun RecordScreen(command: String, onBack: () -> Unit) {

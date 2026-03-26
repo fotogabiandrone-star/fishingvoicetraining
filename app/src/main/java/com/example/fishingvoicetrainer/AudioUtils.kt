@@ -79,14 +79,16 @@ fun stopRecording(recorder: AudioRecord?) {
 
 fun trimSilence(
     pcmFile: File,
-    threshold: Int = 200,      // amplitudine minimă (≈ -40 dB)
-    windowSize: Int = 160      // 160 sample-uri ≈ 10 ms la 16 kHz
+    minThreshold: Int = 1500,   // prag minim (telefon liniștit)
+    maxThreshold: Int = 4000,   // prag maxim (zgomot mare)
+    windowSize: Int = 160,      // ~10 ms la 16 kHz
+    minVoiceMs: Int = 200       // minim 200 ms de voce păstrată
 ): File {
 
     val pcmData = pcmFile.readBytes()
     if (pcmData.isEmpty()) return pcmFile
 
-    // Convertim PCM 16-bit LE în short[]
+    // PCM 16-bit LE -> short[]
     val samples = ShortArray(pcmData.size / 2)
     var idx = 0
     for (i in samples.indices) {
@@ -94,36 +96,51 @@ fun trimSilence(
         idx += 2
     }
 
-    // Găsim începutul
+    // 1) Estimăm zgomotul de fond din primele 300 ms
+    val noiseWindowSamples = (0.3f * 16000).toInt().coerceAtMost(samples.size)
+    var noiseMax = 0
+    for (i in 0 until noiseWindowSamples) {
+        noiseMax = maxOf(noiseMax, kotlin.math.abs(samples[i].toInt()))
+    }
+
+    // prag adaptiv: între minThreshold și maxThreshold
+    val adaptiveThreshold = noiseMax
+        .coerceIn(minThreshold, maxThreshold)
+
+    // 2) Căutăm începutul (prima fereastră care depășește pragul)
     var start = 0
     while (start < samples.size) {
         var maxAmp = 0
         for (i in start until minOf(start + windowSize, samples.size)) {
-            maxAmp = maxOf(maxAmp, abs(samples[i].toInt()))
+            maxAmp = maxOf(maxAmp, kotlin.math.abs(samples[i].toInt()))
         }
-        if (maxAmp > threshold) break
+        if (maxAmp > adaptiveThreshold) break
         start += windowSize
     }
 
-    // Găsim finalul
+    // 3) Căutăm finalul (de la coadă spre început)
     var end = samples.size - 1
     while (end > 0) {
         var maxAmp = 0
         val winStart = maxOf(0, end - windowSize)
         for (i in winStart..end) {
-            maxAmp = maxOf(maxAmp, abs(samples[i].toInt()))
+            maxAmp = maxOf(maxAmp, kotlin.math.abs(samples[i].toInt()))
         }
-        if (maxAmp > threshold) break
+        if (maxAmp > adaptiveThreshold) break
         end -= windowSize
     }
 
-    // Dacă nu găsim nimic util, returnăm originalul
+    // 4) Protecție: dacă nu găsim voce clară, returnăm originalul
     if (start >= end) return pcmFile
 
-    // Extragem doar partea utilă
-    val trimmedSamples = samples.copyOfRange(start, end)
+    // 5) Verificăm să avem măcar minVoiceMs de voce
+    val minVoiceSamples = (minVoiceMs * 16).coerceAtMost(samples.size) // 16 samples/ms la 16 kHz
+    if (end - start < minVoiceSamples) return pcmFile
 
-    // Scriem într-un nou fișier
+    // 6) Extragem partea utilă (inclusiv end)
+    val trimmedSamples = samples.copyOfRange(start, end + 1)
+
+    // 7) Scriem într-un nou fișier
     val trimmedFile = File(pcmFile.parent, pcmFile.nameWithoutExtension + "_trimmed.pcm")
     FileOutputStream(trimmedFile).use { fos ->
         for (s in trimmedSamples) {
@@ -134,6 +151,7 @@ fun trimSilence(
 
     return trimmedFile
 }
+
 
 // ===============================
 //  CONVERSIE PCM → WAV
