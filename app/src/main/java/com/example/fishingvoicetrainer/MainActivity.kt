@@ -6,6 +6,7 @@ import android.media.AudioRecord
 import android.media.MediaPlayer
 import android.os.Bundle
 import android.os.Environment
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -37,8 +38,10 @@ enum class ScreenState {
     MAIN,
     RECORD,
     SAMPLES,
-    SETTINGS   // 🔵 NOU
+    SETTINGS,
+    LISTEN      // 🔵 ADĂUGAT
 }
+
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -69,7 +72,8 @@ fun AppContent() {
                 screen = ScreenState.RECORD
             },
             onSamples = { screen = ScreenState.SAMPLES },
-            onSettings = { screen = ScreenState.SETTINGS }   // 🔵 NOU
+            onSettings = { screen = ScreenState.SETTINGS },
+            onListen = { screen = ScreenState.LISTEN }   // 🔵 ADĂUGAT
         )
 
         ScreenState.RECORD -> RecordScreen(
@@ -81,11 +85,16 @@ fun AppContent() {
             onBack = { screen = ScreenState.MAIN }
         )
 
-        ScreenState.SETTINGS -> SettingsScreen(   // 🔵 NOU
+        ScreenState.SETTINGS -> SettingsScreen(
+            onBack = { screen = ScreenState.MAIN }
+        )
+
+        ScreenState.LISTEN -> ListeningScreen(        // 🔵 ADĂUGAT
             onBack = { screen = ScreenState.MAIN }
         )
     }
 }
+
 
 // ---------------------------------------------------------
 //  MAIN SCREEN
@@ -94,7 +103,8 @@ fun AppContent() {
 fun MainScreen(
     onCommandSelected: (String) -> Unit,
     onSamples: () -> Unit,
-    onSettings: () -> Unit   // 🔵 NOU
+    onSettings: () -> Unit,
+    onListen: () -> Unit      // 🔵 ADĂUGAT
 ) {
 
     val context = LocalContext.current
@@ -195,9 +205,21 @@ fun MainScreen(
             ) {
                 Text("Setări", fontSize = 16.sp)
             }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // 🔵 BUTON NOU — ASCULTARE COMENZI VOCALE
+            Button(
+                onClick = onListen,
+                modifier = Modifier.fillMaxWidth(),
+                contentPadding = PaddingValues(8.dp)
+            ) {
+                Text("Ascultare comenzi vocale", fontSize = 16.sp)
+            }
         }
     }
 }
+
 
 // ---------------------------------------------------------
 //  EXPORT DATASET
@@ -205,7 +227,12 @@ fun MainScreen(
 fun exportDataset(context: android.content.Context) {
     val datasetRoot = File(context.getExternalFilesDir(null), "dataset")
     val downloads = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-    val zipFile = File(downloads, "dataset_export.zip")
+
+    // Timestamp frumos
+    val sdf = java.text.SimpleDateFormat("yyyyMMdd_HHmmss")
+    val stamp = sdf.format(java.util.Date())
+
+    val zipFile = File(downloads, "dataset_export_$stamp.zip")
 
     ZipOutputStream(FileOutputStream(zipFile)).use { zip ->
         datasetRoot.walkTopDown().forEach { file ->
@@ -217,7 +244,10 @@ fun exportDataset(context: android.content.Context) {
             }
         }
     }
+
+    Log.d("EXPORT", "Export complet: ${zipFile.absolutePath}")
 }
+
 
 // ---------------------------------------------------------
 //  SETTINGS SCREEN (SLIDER + EXPLICAȚII + RESET S20)

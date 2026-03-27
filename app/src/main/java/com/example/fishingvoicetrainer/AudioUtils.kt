@@ -5,10 +5,13 @@ import android.annotation.SuppressLint
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
+import android.util.Log
 import java.io.File
 import java.io.FileOutputStream
 import java.io.RandomAccessFile
 import kotlin.math.abs
+
+private const val TAG = "Recorder"
 
 // ======================================
 //  GENERARE NUME INCREMENTAL (001, 002…)
@@ -51,11 +54,18 @@ fun startRecording(outputFile: File): AudioRecord {
     )
 
     recorder.startRecording()
+    Log.d(TAG, "Recorder started, state=${recorder.recordingState}")
 
     Thread {
         val buffer = ByteArray(bufferSize)
+
+        Log.d(TAG, "Thread started, recorderState=${recorder.recordingState}")
+
         FileOutputStream(outputFile).use { fos ->
             while (recorder.recordingState == AudioRecord.RECORDSTATE_RECORDING) {
+
+                Log.d(TAG, "Loop check: state=${recorder.recordingState}")
+
                 val read = recorder.read(buffer, 0, buffer.size)
                 if (read > 0) fos.write(buffer, 0, read)
             }
@@ -79,20 +89,17 @@ fun stopRecording(recorder: AudioRecord?) {
 // ===============================
 fun normalizePcm(samples: ShortArray, targetDb: Int = -1): ShortArray {
 
-    // 1) Găsim peak-ul absolut
     var peak = 0
     for (s in samples) {
         val v = abs(s.toInt())
         if (v > peak) peak = v
     }
 
-    if (peak == 0) return samples // liniște totală
+    if (peak == 0) return samples
 
-    // 2) Calculăm factorul de amplificare
     val targetAmp = (32767.0 * Math.pow(10.0, targetDb / 20.0)).toInt()
     val factor = targetAmp.toDouble() / peak.toDouble()
 
-    // 3) Aplicăm factorul, cu protecție la clipping
     val out = ShortArray(samples.size)
     for (i in samples.indices) {
         val scaled = (samples[i] * factor).toInt()
@@ -104,7 +111,6 @@ fun normalizePcm(samples: ShortArray, targetDb: Int = -1): ShortArray {
 
 // ===============================
 //  TRIMMING AUTOMAT AL LINISTII
-//  (cu setări din SharedPreferences)
 // ===============================
 
 fun trimSilence(
@@ -116,7 +122,7 @@ fun trimSilence(
 
     val minThreshold = prefs.getInt("minThreshold", 1800)
     val maxThreshold = prefs.getInt("maxThreshold", 3800)
-    val windowSize = prefs.getInt("windowSize", 80)   // 5 ms recomandat
+    val windowSize = prefs.getInt("windowSize", 80)
     val minVoiceMs = prefs.getInt("minVoiceMs", 200)
 
     val preRollMs = prefs.getInt("preRollMs", 60)
@@ -128,7 +134,6 @@ fun trimSilence(
     val pcmData = pcmFile.readBytes()
     if (pcmData.isEmpty()) return pcmFile
 
-    // PCM 16-bit LE -> short[]
     val samples = ShortArray(pcmData.size / 2)
     var idx = 0
     for (i in samples.indices) {
@@ -136,7 +141,6 @@ fun trimSilence(
         idx += 2
     }
 
-    // 1) Estimăm zgomotul de fond din primele 300 ms
     val noiseWindowSamples = (0.3f * 16000).toInt().coerceAtMost(samples.size)
     var noiseMax = 0
     for (i in 0 until noiseWindowSamples) {
@@ -145,7 +149,6 @@ fun trimSilence(
 
     val adaptiveThreshold = noiseMax.coerceIn(minThreshold, maxThreshold)
 
-    // 2) Căutăm începutul
     var start = 0
     while (start < samples.size) {
         var maxAmp = 0
@@ -156,10 +159,8 @@ fun trimSilence(
         start += windowSize
     }
 
-    // PRE‑ROLL
     start = (start - preRollSamples).coerceAtLeast(0)
 
-    // 3) Căutăm finalul
     var end = samples.size - 1
     while (end > 0) {
         var maxAmp = 0
@@ -171,23 +172,16 @@ fun trimSilence(
         end -= windowSize
     }
 
-    // POST‑ROLL
     end = (end + postRollSamples).coerceAtMost(samples.size - 1)
 
-    // 4) Protecție: dacă nu găsim voce clară
     if (start >= end) return pcmFile
 
-    // 5) Minim X ms voce
     val minVoiceSamples = (minVoiceMs * 16).coerceAtMost(samples.size)
     if (end - start < minVoiceSamples) return pcmFile
 
-    // 6) Extragem partea utilă
     val trimmedSamples = samples.copyOfRange(start, end + 1)
-
-    // 🔥 NORMALIZARE DUPĂ TRIMMING
     val normalizedSamples = normalizePcm(trimmedSamples)
 
-    // 7) Scriem fișierul
     val trimmedFile = File(pcmFile.parent, pcmFile.nameWithoutExtension + "_trimmed.pcm")
     FileOutputStream(trimmedFile).use { fos ->
         for (s in normalizedSamples) {
